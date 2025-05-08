@@ -1,4 +1,4 @@
-const ws = new WebSocket(`ws://${location.host}`);
+const ws = new WebSocket(`wss://${location.host}`);
 const messages = document.getElementById('messages');
 const input = document.getElementById('messageInput');
 const typingStatus = document.createElement('div');
