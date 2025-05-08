@@ -16,20 +16,31 @@ const wss = new WebSocket.Server({ server });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+const HEARTBEAT_INTERVAL = 30000; // 30 seconds
+
+function heartbeat() {
+    this.isAlive = true;
+}
+
 wss.on('connection', (ws) => {
     ws.id = uuidv4();
     ws.username = `User-${ws.id.slice(0, 4)}`;
+    ws.isAlive = true;
 
     console.log(`${ws.username} connected`);
 
     ws.send(JSON.stringify({ type: 'info', message: `You are connected as ${ws.username}` }));
 
+    ws.on('pong', heartbeat);
+
     ws.on('message', (message) => {
+        ws.isAlive = true;
+
         let data;
         try {
             data = JSON.parse(message);
-        } catch {
-            console.error("Invalid JSON");
+        } catch (e) {
+            console.error("Invalid JSON received:", message.toString());
             return;
         }
 
@@ -47,9 +58,7 @@ wss.on('connection', (ws) => {
                     client.send(JSON.stringify(msgObj));
                 }
             });
-        }
-
-        if (data.type === 'typing') {
+        } else if (data.type === 'typing') {
             wss.clients.forEach((client) => {
                 if (client.readyState === WebSocket.OPEN && client !== ws) {
                     client.send(JSON.stringify({
@@ -59,11 +68,33 @@ wss.on('connection', (ws) => {
                 }
             });
         }
+        // else if (data.type === '__ping__') { // Jika klien mengirim ping aplikasi
+        //     ws.send(JSON.stringify({ type: '__pong__' }));
+        // }
     });
 
     ws.on('close', () => {
         console.log(`${ws.username} disconnected`);
     });
+
+    ws.on('error', (err) => {
+        console.error(`${ws.username} error: ${err.message}`);
+    });
+});
+
+const interval = setInterval(function pingClients() { // Ganti nama fungsi agar lebih deskriptif
+    wss.clients.forEach(function each(ws) {
+        if (ws.isAlive === false) {
+            console.log(`Terminating connection with ${ws.username} due to inactivity.`);
+            return ws.terminate();
+        }
+        ws.isAlive = false;
+        ws.ping(); // PERBAIKAN DI SINI
+    });
+}, HEARTBEAT_INTERVAL);
+
+wss.on('close', function close() {
+    clearInterval(interval);
 });
 
 const PORT = 3000;
