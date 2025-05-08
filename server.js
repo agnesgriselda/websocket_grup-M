@@ -17,8 +17,11 @@ const wss = new WebSocket.Server({ server });
 app.use(express.static(path.join(__dirname, 'public')));
 
 const HEARTBEAT_INTERVAL = 30000;
-const SERVER_ANNOUNCEMENT_INTERVAL_MS = 20000; // Kirim pengumuman setiap 20 detik
+const SERVER_ANNOUNCEMENT_INTERVAL_MS = 20000;
 let announcementIntervalId;
+
+const MAX_CONNECTIONS = 5; // Batas maksimum koneksi
+let activeConnections = 0;  // Counter untuk koneksi aktif
 
 function heartbeat() {
     this.isAlive = true;
@@ -32,8 +35,6 @@ function broadcastServerAnnouncement() {
         timestamp: new Date().toLocaleTimeString()
     };
     const announcementString = JSON.stringify(announcement);
-
-    // console.log("Server: Broadcasting announcement:", announcement.message);
     wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
             client.send(announcementString);
@@ -42,11 +43,10 @@ function broadcastServerAnnouncement() {
 }
 
 // Fungsi untuk mengirim notifikasi user bergabung/meninggalkan chat
-function broadcastUserActivity(username, activityType) { // activityType bisa 'joined' atau 'left'
+function broadcastUserActivity(username, activityType) {
     const message = activityType === 'joined'
         ? `${username} has joined the chat!`
         : `${username} has left the chat.`;
-
     const notification = {
         type: 'user_activity_notification',
         user: username,
@@ -55,28 +55,34 @@ function broadcastUserActivity(username, activityType) { // activityType bisa 'j
         timestamp: new Date().toLocaleTimeString()
     };
     const notificationString = JSON.stringify(notification);
-
     wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
-            // Kirim ke semua klien
             client.send(notificationString);
         }
     });
     console.log(`Server: Broadcasted ${activityType} notification for ${username}`);
 }
 
-
+// Event handler untuk setiap koneksi WebSocket baru
 wss.on('connection', (ws) => {
+    // Cek apakah batas koneksi sudah tercapai
+    if (activeConnections >= MAX_CONNECTIONS) {
+        console.log(`Server: Connection limit (${MAX_CONNECTIONS}) reached. Rejecting new connection.`);
+        ws.send(JSON.stringify({ type: 'error', message: 'Server is full. Please try again later.' }));
+        ws.terminate(); // Langsung tutup koneksi baru
+        return;
+    }
+
+    activeConnections++; // Naikkan counter koneksi aktif
+    console.log(`Server: Active connections: ${activeConnections}/${MAX_CONNECTIONS}`);
+
     ws.id = uuidv4();
     ws.username = `User-${ws.id.slice(0, 4)}`;
     ws.isAlive = true;
 
     console.log(`${ws.username} connected`);
 
-    // Kirim pesan info personal ke klien yang baru terhubung
     ws.send(JSON.stringify({ type: 'info', message: `You are connected as ${ws.username}` }));
-
-    // Kirim notifikasi ke semua klien bahwa pengguna baru telah bergabung
     broadcastUserActivity(ws.username, 'joined');
 
     ws.on('pong', heartbeat);
@@ -99,14 +105,12 @@ wss.on('connection', (ws) => {
                 text: data.text,
                 timestamp: new Date().toLocaleTimeString(),
             };
-            // Broadcast pesan chat ke semua klien
             wss.clients.forEach((client) => {
                 if (client.readyState === WebSocket.OPEN) {
                     client.send(JSON.stringify(msgObj));
                 }
             });
         } else if (data.type === 'typing') {
-            // Broadcast status typing ke klien lain
             wss.clients.forEach((client) => {
                 if (client.readyState === WebSocket.OPEN && client !== ws) {
                     client.send(JSON.stringify({
@@ -119,12 +123,13 @@ wss.on('connection', (ws) => {
     });
 
     ws.on('close', () => {
-        console.log(`${ws.username} disconnected`);
-        // Kirim notifikasi ke semua klien bahwa pengguna telah meninggalkan chat
+        activeConnections--; // Turunkan counter koneksi aktif
+        console.log(`${ws.username} disconnected. Active connections: ${activeConnections}/${MAX_CONNECTIONS}`);
         broadcastUserActivity(ws.username, 'left');
     });
 
     ws.on('error', (err) => {
+        // Tidak mengurangi activeConnections di sini karena 'close' akan selalu dipanggil setelah 'error'
         console.error(`${ws.username} error: ${err.message}`);
     });
 });
@@ -133,6 +138,7 @@ const heartbeatCheckInterval = setInterval(function pingClients() {
     wss.clients.forEach(function each(ws) {
         if (ws.isAlive === false) {
             console.log(`Terminating connection with ${ws.username} due to inactivity.`);
+            // 'close' event akan dipicu setelah terminate, yang akan menangani activeConnections--
             return ws.terminate();
         }
         ws.isAlive = false;
@@ -140,15 +146,14 @@ const heartbeatCheckInterval = setInterval(function pingClients() {
     });
 }, HEARTBEAT_INTERVAL);
 
-
-wss.on('listening', () => { // Mulai interval pengumuman setelah server benar-benar listen
+wss.on('listening', () => {
     if (SERVER_ANNOUNCEMENT_INTERVAL_MS > 0 && !announcementIntervalId) {
         announcementIntervalId = setInterval(broadcastServerAnnouncement, SERVER_ANNOUNCEMENT_INTERVAL_MS);
         console.log(`Server: Started broadcasting announcements every ${SERVER_ANNOUNCEMENT_INTERVAL_MS / 1000} seconds.`);
     }
 });
 
-wss.on('close', function closeServer() { // Renamed for clarity
+wss.on('close', function closeServer() {
     clearInterval(heartbeatCheckInterval);
     if (announcementIntervalId) {
         clearInterval(announcementIntervalId);
