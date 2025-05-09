@@ -20,7 +20,7 @@ const HEARTBEAT_INTERVAL = 30000;
 const SERVER_ANNOUNCEMENT_INTERVAL_MS = 20000;
 let announcementIntervalId;
 
-const MAX_CONNECTIONS = 5; // Batas maksimum koneksi
+const MAX_CONNECTIONS = 20; // Batas maksimum koneksi diubah kembali ke 20 (sesuai diskusi sebelumnya)
 let activeConnections = 0;  // Counter untuk koneksi aktif
 
 function heartbeat() {
@@ -65,15 +65,14 @@ function broadcastUserActivity(username, activityType) {
 
 // Event handler untuk setiap koneksi WebSocket baru
 wss.on('connection', (ws) => {
-    // Cek apakah batas koneksi sudah tercapai
     if (activeConnections >= MAX_CONNECTIONS) {
         console.log(`Server: Connection limit (${MAX_CONNECTIONS}) reached. Rejecting new connection.`);
         ws.send(JSON.stringify({ type: 'error', message: 'Server is full. Please try again later.' }));
-        ws.terminate(); // Langsung tutup koneksi baru
+        ws.terminate();
         return;
     }
 
-    activeConnections++; // Naikkan counter koneksi aktif
+    activeConnections++;
     console.log(`Server: Active connections: ${activeConnections}/${MAX_CONNECTIONS}`);
 
     ws.id = uuidv4();
@@ -82,7 +81,12 @@ wss.on('connection', (ws) => {
 
     console.log(`${ws.username} connected`);
 
-    ws.send(JSON.stringify({ type: 'info', message: `You are connected as ${ws.username}` }));
+    // Mengirim pesan info termasuk ID koneksi WebSocket klien
+    ws.send(JSON.stringify({
+        type: 'info',
+        message: `You are connected as ${ws.username}`,
+        connectionId: ws.id // <<< PENAMBAHAN FIELD connectionId
+    }));
     broadcastUserActivity(ws.username, 'joined');
 
     ws.on('pong', heartbeat);
@@ -101,7 +105,7 @@ wss.on('connection', (ws) => {
             const msgObj = {
                 type: 'chat',
                 user: ws.username,
-                id: ws.id,
+                id: ws.id, // id pengirim sudah ada di sini, ini penting untuk client
                 text: data.text,
                 timestamp: new Date().toLocaleTimeString(),
             };
@@ -123,13 +127,12 @@ wss.on('connection', (ws) => {
     });
 
     ws.on('close', () => {
-        activeConnections--; // Turunkan counter koneksi aktif
+        activeConnections--;
         console.log(`${ws.username} disconnected. Active connections: ${activeConnections}/${MAX_CONNECTIONS}`);
         broadcastUserActivity(ws.username, 'left');
     });
 
     ws.on('error', (err) => {
-        // Tidak mengurangi activeConnections di sini karena 'close' akan selalu dipanggil setelah 'error'
         console.error(`${ws.username} error: ${err.message}`);
     });
 });
@@ -138,7 +141,6 @@ const heartbeatCheckInterval = setInterval(function pingClients() {
     wss.clients.forEach(function each(ws) {
         if (ws.isAlive === false) {
             console.log(`Terminating connection with ${ws.username} due to inactivity.`);
-            // 'close' event akan dipicu setelah terminate, yang akan menangani activeConnections--
             return ws.terminate();
         }
         ws.isAlive = false;
