@@ -1,10 +1,9 @@
-const messages = document.getElementById('messages');
-const input = document.getElementById('messageInput');
-const typingStatus = document.createElement('div');
-typingStatus.style.fontStyle = 'italic';
-messages.appendChild(typingStatus);
+const messagesContainer = document.getElementById('messages'); // Ganti nama variabel agar lebih jelas
+const messageInput = document.getElementById('messageInput'); // Ganti nama variabel
+const typingStatusDiv = document.getElementById('typingStatus'); // Dapatkan elemen dari HTML
 
-let username = '';
+let currentUsername = ''; // Ganti nama variabel
+let ownWsId = null; // Untuk menyimpan ID WebSocket klien ini sendiri
 let ws;
 let heartbeatIntervalId;
 const HEARTBEAT_INTERVAL_MS_CLIENT = 25000;
@@ -14,11 +13,9 @@ function initializeWebSocket() {
     if (ws && ws.readyState !== WebSocket.CLOSED) {
         ws.close();
     }
-
     ws = new WebSocket(`wss://${location.host}`);
-
     ws.onopen = () => {
-        appendSystemMessage('Connected to the server.');
+        appendSystemMessage('Connected to the server.'); // Ini tetap, tapi stylenya dari CSS
         console.log('Client: WebSocket connection established.');
         if (heartbeatIntervalId) clearInterval(heartbeatIntervalId);
         heartbeatIntervalId = setInterval(sendClientPing, HEARTBEAT_INTERVAL_MS_CLIENT);
@@ -29,15 +26,20 @@ function initializeWebSocket() {
         const data = JSON.parse(event.data);
 
         if (data.type === 'info') {
-            username = data.message.split(' ')[4];
+            // Asumsi server mengirimkan ID koneksi WebSocket klien ini di pesan info
+            // Misalnya, data.id berisi ID koneksi
+            if (data.connectionId) { // Kita akan asumsikan server mengirim 'connectionId'
+                ownWsId = data.connectionId;
+            }
+            currentUsername = data.message.split(' ')[4]; // Tetap parsing username
             appendSystemMessage(data.message);
         } else if (data.type === 'chat') {
             appendChatMessage(data);
         } else if (data.type === 'typing') {
             showTyping(data.user);
-        } else if (data.type === 'server_announcement') { // Menangani pengumuman dari server
+        } else if (data.type === 'server_announcement') {
             appendServerAnnouncement(data);
-        } else if (data.type === 'user_activity_notification') { // Menangani notifikasi aktivitas user
+        } else if (data.type === 'user_activity_notification') {
             appendUserActivityNotification(data);
         } else if (data.type === '__pong__') {
             // console.log('Client: Received __pong__ from server');
@@ -61,49 +63,85 @@ function initializeWebSocket() {
 function sendClientPing() {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: '__ping__' }));
-        // console.log('Client: Sent __ping__ to server');
     }
 }
 
-// Fungsi untuk menampilkan pesan chat
+// --- REVISI FUNGSI APPEND DIMULAI DI SINI ---
+
+// Fungsi untuk menampilkan pesan chat dengan struktur baru
 function appendChatMessage(data) {
-    typingStatus.textContent = '';
-    const msg = document.createElement('div');
-    msg.innerHTML = `<b>${data.user}</b> [${data.timestamp}]: ${data.text}`;
-    messages.appendChild(msg);
-    messages.scrollTop = messages.scrollHeight;
+    if (typingStatusDiv) typingStatusDiv.textContent = ''; // Hapus status typing
+
+    const messageItem = document.createElement('div');
+    messageItem.classList.add('message-item');
+
+    // Tentukan apakah pesan ini milik sendiri atau orang lain
+    if (ownWsId && data.id === ownWsId) { // 'data.id' harus dikirim dari server berisi ID pengirim
+        messageItem.classList.add('own');
+    } else {
+        messageItem.classList.add('other');
+        // Tampilkan username hanya untuk pesan orang lain di atas bubble
+        const usernameDisplay = document.createElement('span');
+        usernameDisplay.classList.add('username-display');
+        usernameDisplay.textContent = data.user;
+        messageItem.appendChild(usernameDisplay);
+    }
+
+    const messageBubble = document.createElement('div');
+    messageBubble.classList.add('message-bubble');
+
+    const messageText = document.createElement('p');
+    // messageText.classList.add('message-text'); // Tidak perlu jika styling bubble sudah cukup
+    messageText.textContent = data.text; // Hindari innerHTML untuk teks dari user jika memungkinkan
+    messageBubble.appendChild(messageText);
+
+    const timestampDisplay = document.createElement('span');
+    timestampDisplay.classList.add('timestamp-display');
+    timestampDisplay.textContent = data.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    messageBubble.appendChild(timestampDisplay); // Timestamp di dalam bubble
+
+    messageItem.appendChild(messageBubble);
+    messagesContainer.appendChild(messageItem);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
-// Fungsi untuk menampilkan pesan sistem
+// Fungsi untuk menampilkan pesan sistem dengan class CSS baru
 function appendSystemMessage(msgText) {
     const div = document.createElement('div');
-    div.style.color = 'gray';
+    div.classList.add('system-message'); // Gunakan class dari CSS
     div.textContent = msgText;
-    messages.appendChild(div);
-    messages.scrollTop = messages.scrollHeight;
+    messagesContainer.appendChild(div);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
-// Fungsi untuk menampilkan pengumuman dari server
+// Fungsi untuk menampilkan pengumuman dari server dengan class CSS baru
 function appendServerAnnouncement(data) {
-    typingStatus.textContent = '';
+    if (typingStatusDiv) typingStatusDiv.textContent = ''; // Hapus status typing
+
     const div = document.createElement('div');
-    div.style.color = 'purple';
-    div.style.fontWeight = 'bold';
-    div.innerHTML = `📢 [${data.timestamp || new Date().toLocaleTimeString()}]: ${data.message}`;
-    messages.appendChild(div);
-    messages.scrollTop = messages.scrollHeight;
+    div.classList.add('server-announcement'); // Gunakan class dari CSS
+    div.innerHTML = `📢 ${data.message} [${data.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}]`;
+    messagesContainer.appendChild(div);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
-// Fungsi untuk menampilkan notifikasi aktivitas pengguna (bergabung/meninggalkan)
+// Fungsi untuk menampilkan notifikasi aktivitas pengguna dengan class CSS baru
 function appendUserActivityNotification(data) {
-    typingStatus.textContent = '';
+    if (typingStatusDiv) typingStatusDiv.textContent = ''; // Hapus status typing
+
     const div = document.createElement('div');
-    div.style.color = data.activity === 'joined' ? 'green' : 'orange';
-    div.style.fontStyle = 'italic';
-    div.textContent = `🔔 ${data.message} [${data.timestamp || new Date().toLocaleTimeString()}]`;
-    messages.appendChild(div);
-    messages.scrollTop = messages.scrollHeight;
+    div.classList.add('user-activity'); // Class dasar
+    if (data.activity === 'joined') {
+        div.classList.add('joined');
+    } else if (data.activity === 'left') {
+        div.classList.add('left');
+    }
+    div.textContent = `🔔 ${data.message} [${data.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}]`;
+    messagesContainer.appendChild(div);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
+
+// --- AKHIR REVISI FUNGSI APPEND ---
 
 
 // Fungsi untuk mengirim pesan chat
@@ -112,29 +150,36 @@ function sendMessage() {
         appendSystemMessage('Not connected to server. Cannot send message.');
         return;
     }
-    const text = input.value.trim();
+    const text = messageInput.value.trim();
     if (text) {
         ws.send(JSON.stringify({ type: 'chat', text }));
-        input.value = '';
+        messageInput.value = '';
     }
 }
 
-// Fungsi untuk menampilkan status typing
+// Fungsi untuk menampilkan status typing di div yang sudah ada
 function showTyping(user) {
-    typingStatus.textContent = `${user} is typing...`;
-    setTimeout(() => {
-        if (typingStatus.textContent === `${user} is typing...`) {
-            typingStatus.textContent = '';
-        }
-    }, 2000);
+    if (typingStatusDiv) {
+        typingStatusDiv.textContent = `${user} is typing...`;
+        setTimeout(() => {
+            // Hanya hapus jika masih pesan yang sama dan user yang sama
+            if (typingStatusDiv.textContent === `${user} is typing...`) {
+                typingStatusDiv.textContent = '';
+            }
+        }, 3000); // Perpanjang sedikit timeout
+    }
 }
 
 let typingTimeout;
-input.addEventListener('input', () => {
+messageInput.addEventListener('input', () => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
     if (typingTimeout) clearTimeout(typingTimeout);
     ws.send(JSON.stringify({ type: 'typing' }));
+    // Timeout untuk menghentikan 'typing' jika pengguna berhenti mengetik (opsional, server bisa handle ini)
+    // typingTimeout = setTimeout(() => {
+    //     // ws.send(JSON.stringify({ type: 'stop_typing' })); // Jika ada pesan stop_typing
+    // }, 3000);
 });
 
 initializeWebSocket();
@@ -143,8 +188,9 @@ const sendButton = document.getElementById('sendButton');
 if (sendButton) {
     sendButton.addEventListener('click', sendMessage);
 }
-input.addEventListener('keypress', (event) => {
+messageInput.addEventListener('keypress', (event) => {
     if (event.key === 'Enter') {
         sendMessage();
+        event.preventDefault(); // Mencegah default action (misalnya, submit form jika ada)
     }
 });
