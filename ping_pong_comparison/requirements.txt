@@ -1,0 +1,8 @@
+websockets
+fastapi
+uvicorn[standard] # Untuk FastAPI server
+requests          # Untuk REST client
+grpcio
+grpcio-tools
+matplotlib
+numpy             # matplotlib biasanya butuh ini
