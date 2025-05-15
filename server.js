@@ -7,9 +7,30 @@ const url = require('url'); // Diperlukan untuk parse URL dan query params
 // const bcrypt = require('bcryptjs'); // Tidak diperlukan jika menggunakan password plain text
 const jwt = require('jsonwebtoken'); // Tetap diperlukan untuk JWT
 
+// Add rate limiting
+const rateLimit = require('express-rate-limit');
+
 const app = express();
+
+// Add request logging middleware
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        const duration = Date.now() - start;
+        console.log(`${new Date().toISOString()} - ${req.method} ${req.url} - ${res.statusCode} - ${duration}ms`);
+    });
+    next();
+});
+
 app.use(express.json()); // Middleware untuk parse JSON body requests
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Configure rate limiter
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // 5 attempts per window
+    message: { success: false, message: 'Too many login attempts, please try again later.' }
+});
 
 // --- Konfigurasi Autentikasi ---
 const JWT_SECRET = 'TUGASINSISWEBSOCKETGRUPMKELASB_!_MySup3rS3cr3t_2025@P@$$'; // Secret key JWT-mu
@@ -68,8 +89,8 @@ function broadcastUserActivity(username, activityType, excludedWsId = null) {
     console.log(`Server: Broadcasted ${activityType} notification for ${username}`);
 }
 
-// Endpoint HTTP untuk Login (dengan plain text password)
-app.post('/login', (req, res) => {
+// Apply rate limiter to login endpoint
+app.post('/login', loginLimiter, (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
         return res.status(400).json({ success: false, message: 'Username and password are required.' });
@@ -214,6 +235,24 @@ wss.on('close', function closeServer() {
         clearInterval(announcementIntervalId);
         console.log("Server: Stopped broadcasting announcements.");
     }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Server Error:', err);
+    res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+});
+
+// Handle 404
+app.use((req, res) => {
+    res.status(404).json({
+        success: false,
+        message: 'Route not found'
+    });
 });
 
 const PORT = 3000;
